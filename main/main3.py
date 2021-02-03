@@ -1,40 +1,19 @@
 # -*- coding: utf-8 -*-
 import datetime as dt
 
+import matplotlib.pyplot as plt
 import pandas as pd
-import yfinance as yf
 from dateutil.relativedelta import relativedelta as rel
 
 import download
 
-data_csv = pd.read_csv("..\\resource\\sample.csv", header=None, names=['code'])
-stocks = [str(s) + ".T" for s in data_csv.code]
-
-today: dt.date = dt.date.today()
-yesterday: dt.date = dt.date.today() - rel(days=1)
-
 if dt.datetime.now().hour.__int__() >= 15:
-    end_day = today
+    end_day = dt.date.today()
 else:
-    end_day = yesterday
-last_weekday: dt.date = download.search_last_weekday(end_day)
-before_a_year_day: dt.date = last_weekday - rel(years=1)
+    end_day = dt.date.today() - rel(days=1)
 
-# ダウンロードするか
 do_download_history = False
-stock_data_csv = "..\\resource\\stock_data.csv"
-if do_download_history:
-    history: pd.DataFrame = yf.download(stocks, start=before_a_year_day,
-                                        end=last_weekday, group_by='column')
-    history.dropna(how='all', inplace=True)
-    history.to_csv(path_or_buf=stock_data_csv)
-else:
-    history: pd.DataFrame = pd.read_csv(stock_data_csv, index_col=0, header=[0, 1], parse_dates=True)
-
-if last_weekday not in history.index.values:
-    last_weekday_stock_price = download.download_a_date_stock_price(
-        last_weekday, history.columns.levels[1].values)
-    history = history.append(last_weekday_stock_price)
+history = download.download_current_history(end_day, do_download_history)
 
 # 出来高10万株以上
 volume = history.loc[:, 'Volume']
@@ -46,7 +25,8 @@ Adj_Close = Adj_Close.reindex(columns=target)
 
 # 終値100円以上
 Adj_Close_mean = Adj_Close.mean()
-target = Adj_Close_mean[Adj_Close_mean > 99].index.values
+Adj_Close_mean = Adj_Close_mean[Adj_Close_mean > 99]
+target = Adj_Close_mean[Adj_Close_mean <= 5000].index.values
 # 結果反映
 Adj_Close = Adj_Close.reindex(columns=target)
 volume = volume.reindex(columns=target)
@@ -63,7 +43,9 @@ volume = volume.reindex(columns=target)
 close_mean_75 = Adj_Close.rolling(window=75).mean()
 compare = Adj_Close / close_mean_75 - 1
 dissociation = compare.tail(1).T.rename(columns={compare.index[-1]: 'difference'})
-target = dissociation.query('-0.02 <= difference <= 0.02').index.values
+dissociation = dissociation.query('-0.05 <= difference <= 0')
+target = dissociation.index.values
+
 # 結果反映
 Adj_Close = Adj_Close.reindex(columns=target)
 close_mean_75 = Adj_Close.rolling(window=75).mean()
@@ -81,19 +63,28 @@ target = diff_month.index.values
 Adj_Close = Adj_Close.reindex(columns=target)
 close_mean_75 = Adj_Close.rolling(window=75).mean()
 
-# 直近の75日移動平均の傾きがプラス、2か月前はマイナス
-diff_75 = close_mean_75.diff()
-two_month_ago = last_day - rel(months=2)
-df_concat = pd.DataFrame(index=diff_75.columns, columns=[])
-df_concat['last_day'] = diff_75.iloc[-1]
-df_concat['two_month_ago'] = diff_75[:two_month_ago].iloc[-1]
-df_concat = df_concat.query('last_day >= 0 and two_month_ago <=0')
-target = df_concat.index.values
+# # 直近の75日移動平均の傾きがプラス、2か月前はマイナス
+# diff_75 = close_mean_75.diff()
+# two_month_ago = last_day - rel(months=2)
+# df_concat = pd.DataFrame(index=diff_75.columns, columns=[])
+# df_concat['last_day'] = diff_75.iloc[-1]
+# df_concat['two_month_ago'] = diff_75[:two_month_ago].iloc[-1]
+# df_concat = df_concat.query('last_day >= 0 and two_month_ago <=0')
+# target = df_concat.index.values
 
 # 結果反映
 Adj_Close = Adj_Close.reindex(columns=target)
 close_mean_75 = Adj_Close.rolling(window=75).mean()
 volume = volume.reindex(columns=target)
 close_mean_25 = Adj_Close.rolling(window=25).mean()
+
+for code in Adj_Close.columns.values:
+    plt_df = pd.DataFrame(Adj_Close[code])
+    plt_df.columns = ['Adj_Close']
+    plt_df = plt_df.assign(close_mean_75=close_mean_75[code])
+    plt_df = plt_df.assign(close_mean_25=close_mean_25[code])
+    plt_df.plot()
+    plt.title(code)
+    plt.show()
 
 sum = 1

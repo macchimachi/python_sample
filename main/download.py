@@ -6,21 +6,33 @@ import zipfile
 from typing import List
 
 import pandas as pd
+import yfinance as yf
 from dateutil.relativedelta import relativedelta as rel
 
 
-def search_last_weekday(target_date: dt.date) -> dt.date:
+def search_business_days_before(target_date: dt.date, how_long_ago: int = 0) -> dt.date:
+    if type(target_date) is not dt.date:
+        raise ValueError
+
+    if how_long_ago < 0:
+        raise ValueError
+
     holiday_url = 'https://www.jpx.co.jp/corporate/about-jpx/calendar/index.html'
-    holiday_dfs = pd.read_html(holiday_url)
-    holiday_df = pd.concat([holiday_dfs[0], holiday_dfs[1]], axis=0)
+    holiday_df = pd.concat(pd.read_html(holiday_url), axis=0)
+    holiday_ary = [dt.datetime.strptime(x[:10], '%Y/%m/%d').date() for x in holiday_df['日付']]
 
-    weekday_index = target_date.weekday()
-    while weekday_index == 5 or weekday_index == 6 \
-            or holiday_df['日付'].str.startswith(target_date.strftime('YYYY/mm/dd')).sum() > 0:
-        target_date = target_date - rel(days=1)
-        weekday_index = target_date.weekday()
+    if not (holiday_ary[0].year <= target_date.year <= holiday_ary[-1].year):
+        raise ValueError
 
-    return target_date
+    business_ary = [x for x in pd.date_range(start=dt.datetime(holiday_ary[0].year, 1, 1),
+                                             end=target_date,
+                                             freq="B") if x not in holiday_ary]
+
+    target_index = how_long_ago + 1
+    if len(business_ary) < target_index:
+        raise ValueError
+
+    return business_ary[-target_index]
 
 
 def download_a_date_stock_price(target_date: dt.date, stock_codes: List) -> pd.DataFrame:
@@ -65,3 +77,28 @@ def download_a_date_stock_price(target_date: dt.date, stock_codes: List) -> pd.D
         index={'Date': dt.datetime.strptime(date_yyyymmdd, '%Y%m%d')})
 
     return after_transpose_data
+
+
+def download_current_history(end_day: dt.date, do_download_history: bool) -> pd.DataFrame:
+    data_csv = pd.read_csv("..\\resource\\sample.csv", header=None, names=['code'])
+    stocks = [str(s) + ".T" for s in data_csv.code]
+
+    last_weekday: dt.date = search_business_days_before(end_day)
+    before_a_year: dt.date = last_weekday - rel(years=1)
+
+    # ダウンロードするか
+    stock_data_csv = "..\\resource\\stock_data.csv"
+    if do_download_history:
+        history: pd.DataFrame = yf.download(stocks, start=before_a_year,
+                                            end=last_weekday, group_by='column')
+        history.dropna(how='all', inplace=True)
+        history.to_csv(path_or_buf=stock_data_csv)
+    else:
+        history: pd.DataFrame = pd.read_csv(stock_data_csv, index_col=0, header=[0, 1], parse_dates=True)
+
+    if last_weekday not in history.index.values:
+        last_weekday_stock_price = download_a_date_stock_price(
+            last_weekday, history.columns.levels[1].values)
+        history = history.append(last_weekday_stock_price)
+
+    return history
