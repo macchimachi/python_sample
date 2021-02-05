@@ -5,6 +5,7 @@ import urllib.request
 import zipfile
 from typing import List
 
+import investpy
 import pandas as pd
 import yfinance as yf
 from dateutil.relativedelta import relativedelta as rel
@@ -56,6 +57,8 @@ def download_a_date_stock_price(target_date: dt.date, stock_codes: List) -> pd.D
         header=None,
         names=['Date', 'Code', 'Code2', 'Name', 'Open', 'High', 'Low', 'Close', 'Volume', 'Market'],
         encoding="SHIFT-JIS")
+
+    target_date_data = target_date_data.sort_values(['Code']).drop_duplicates('Code', keep='first')
     # 銘柄コードに.Tを付加
     target_date_data['Code'] = [str(x) + '.T' for x in target_date_data['Code']]
     # 引数の銘柄のみ抜き出す
@@ -73,22 +76,21 @@ def download_a_date_stock_price(target_date: dt.date, stock_codes: List) -> pd.D
             [before_transpose_data, stock_data_frame.assign(Type=column, Date=target_date_data[column].values)],
             ignore_index=True)
 
-    after_transpose_data = before_transpose_data.set_index(['Type', 'Code']).drop_duplicates().T.rename(
-        index={'Date': dt.datetime.strptime(date_yyyymmdd, '%Y%m%d')})
+    before_transpose_data = before_transpose_data.set_index(['Type', 'Code'])
+    before_transpose_data.columns = [dt.datetime.strptime(date_yyyymmdd, '%Y%m%d')]
+    after_transpose_data = before_transpose_data.T
 
     return after_transpose_data
 
 
 def download_current_history(end_day: dt.date, do_download_history: bool) -> pd.DataFrame:
-    data_csv = pd.read_csv("..\\resource\\sample.csv", header=None, names=['code'])
-    stocks = [str(s) + ".T" for s in data_csv.code]
-
     last_weekday: dt.date = search_business_days_before(end_day)
     before_a_year: dt.date = last_weekday - rel(years=1)
 
     # ダウンロードするか
     stock_data_csv = "..\\resource\\stock_data.csv"
     if do_download_history:
+        stocks = [x + '.T' for x in sorted(investpy.get_stocks_list(country='japan'))]
         history: pd.DataFrame = yf.download(stocks, start=before_a_year,
                                             end=last_weekday, group_by='column')
         history.dropna(how='all', inplace=True)
@@ -97,8 +99,7 @@ def download_current_history(end_day: dt.date, do_download_history: bool) -> pd.
         history: pd.DataFrame = pd.read_csv(stock_data_csv, index_col=0, header=[0, 1], parse_dates=True)
 
     if last_weekday not in history.index.values:
-        last_weekday_stock_price = download_a_date_stock_price(
-            last_weekday, history.columns.levels[1].values)
-        history = history.append(last_weekday_stock_price)
+        last_weekday_stock_price = download_a_date_stock_price(last_weekday, history.columns.levels[1].values)
+        history = pd.concat([history, last_weekday_stock_price], join='inner')
 
     return history
